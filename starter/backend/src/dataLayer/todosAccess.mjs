@@ -2,7 +2,8 @@ import { DynamoDB } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocument } from '@aws-sdk/lib-dynamodb'
 import AWSXRay from 'aws-xray-sdk-core'
 import { createLogger } from '../utils/logger.mjs'
-import { AttachmentUtils } from '../fileStorage/attachmentUtils.mjs'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import * as AWS from 'aws-sdk'
 
 // const XAWS = AWSXRay.captureAWS(AWS)
@@ -17,12 +18,14 @@ export class TodosAccess {
   // }
   constructor(
     dynamoDbXRay = AWSXRay.captureAWSv3Client(new DynamoDB()),
-    todosTable = process.env.TODOS_TABLE
+    todosTable = process.env.TODOS_TABLE,
+    s3Client = new S3Client()
   ) {
     // this.docClient = new AWS.DynamoDB.DocumentClient()
     // this.todosTable = process.env.TODOS_TABLE
     this.dynamoDbClient = DynamoDBDocument.from(dynamoDbXRay)
     this.todosTable = todosTable
+    this.s3Client = s3Client
   }
 
   async getAllTodos(userId) {
@@ -92,7 +95,13 @@ export class TodosAccess {
 
   async updateTodoAttachmentUrl(todoId, userId) {
     logger.info('Call update todo upload url')
-    const attachmentUrl = AttachmentUtils(todoId)
+    const command = new PutObjectCommand({
+      Bucket: process.env.ATTACHMENT_S3_BUCKET,
+      Key: todoId
+    })
+    const attachmentUrl = await getSignedUrl(this.s3Client, command, {
+      expiresIn: process.env.SIGNED_URL_EXPIRATION
+    })
 
     await this.dynamoDbClient.update({
       TableName: this.todosTable,
@@ -102,7 +111,7 @@ export class TodosAccess {
       },
       UpdateExpression: 'set attachmentUrl = :attachmentUrl',
       ExpressionAttributeValues: {
-        ':attachmentUrl': attachmentUrl
+        ':attachmentUrl': attachmentUrl.split('?')[0]
       },
       ReturnValues: 'UPDATED_NEW'
     })
